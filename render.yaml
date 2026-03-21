@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: suno-pocket-studio
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: ./
+    autoDeployTrigger: commit
+    healthCheckPath: /
+    envVars:
+      - key: SUNO_COOKIE
+        sync: false
+      - key: TWOCAPTCHA_KEY
+        sync: false
+      - key: BROWSER
+        value: chromium
+      - key: BROWSER_GHOST_CURSOR
+        value: "false"
+      - key: BROWSER_LOCALE
+        value: en
+      - key: BROWSER_HEADLESS
+        value: "true"
