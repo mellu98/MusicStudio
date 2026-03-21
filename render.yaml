@@ -3,7 +3,7 @@ services:
     name: suno-pocket-studio
     runtime: docker
     region: frankfurt
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: ./
     autoDeployTrigger: commit
