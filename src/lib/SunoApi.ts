@@ -186,9 +186,11 @@ class SunoApi {
   private async resolvePromptField(page: Page): Promise<Locator> {
     const candidates = [
       page.locator('.custom-textarea').first(),
+      page.getByRole('textbox').first(),
       page.locator('textarea[placeholder]').first(),
       page.locator('textarea').first(),
-      page.locator('[contenteditable="true"]').first()
+      page.locator('[contenteditable="true"]').first(),
+      page.locator('input[type="text"]').first()
     ];
 
     for (const candidate of candidates) {
@@ -200,7 +202,7 @@ class SunoApi {
       }
     }
 
-    throw new Error('Could not find the Suno prompt input in the page.');
+    throw new Error(`Could not find the Suno prompt input in the page. Current URL: ${page.url()}`);
   }
 
   private async resolveCreateButton(page: Page): Promise<Locator> {
@@ -219,7 +221,7 @@ class SunoApi {
       }
     }
 
-    throw new Error('Could not find the Suno create button in the page.');
+    throw new Error(`Could not find the Suno create button in the page. Current URL: ${page.url()}`);
   }
 
   /**
@@ -373,26 +375,85 @@ class SunoApi {
       headless: yn(process.env.BROWSER_HEADLESS, { default: true })
     });
     const context = await browser.newContext({ userAgent: this.userAgent, locale: process.env.BROWSER_LOCALE, viewport: null });
-    const cookies = [];
-    const lax: 'Lax' | 'Strict' | 'None' = 'Lax';
-    cookies.push({
-      name: '__session',
-      value: this.currentToken+'',
-      domain: '.suno.com',
-      path: '/',
-      sameSite: lax
-    });
-    for (const key in this.cookies) {
-      cookies.push({
-        name: key,
-        value: this.cookies[key]+'',
-        domain: '.suno.com',
-        path: '/',
-        sameSite: lax
-      })
-    }
-    await context.addCookies(cookies);
+    await this.seedBrowserCookies(context);
     return context;
+  }
+
+  private async seedBrowserCookies(context: BrowserContext): Promise<void> {
+    const domains = ['.suno.com', '.auth.suno.com', '.accounts.suno.com'];
+    const lax: 'Lax' | 'Strict' | 'None' = 'Lax';
+    const cookiesToAdd: any[] = [];
+
+    for (const domain of domains) {
+      cookiesToAdd.push({
+        name: '__session',
+        value: this.currentToken + '',
+        domain,
+        path: '/',
+        sameSite: lax,
+        secure: true
+      });
+    }
+
+    for (const [key, value] of Object.entries(this.cookies)) {
+      if (!value) {
+        continue;
+      }
+
+      for (const domain of domains) {
+        cookiesToAdd.push({
+          name: key,
+          value: value + '',
+          domain,
+          path: '/',
+          sameSite: lax,
+          secure: true
+        });
+      }
+    }
+
+    await context.addCookies(cookiesToAdd);
+  }
+
+  private isSignInUrl(url: string): boolean {
+    return url.includes('accounts.suno.com/sign-in') || url.includes('/sign-in');
+  }
+
+  private async openAuthenticatedCreatePage(page: Page): Promise<void> {
+    const openCreatePage = async () => {
+      await page.goto('https://suno.com/create', {
+        referer: 'https://www.google.com/',
+        waitUntil: 'domcontentloaded',
+        timeout: 0
+      });
+    };
+
+    await openCreatePage();
+
+    if (!this.isSignInUrl(page.url())) {
+      return;
+    }
+
+    logger.warn(`Redirected to sign-in page during CAPTCHA bootstrap: ${page.url()}`);
+    await this.keepAlive(false);
+    await this.seedBrowserCookies(page.context());
+
+    await page.goto('https://auth.suno.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 0
+    }).catch(() => undefined);
+
+    await page.goto('https://suno.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 0
+    }).catch(() => undefined);
+
+    await sleep(1, 2);
+    await openCreatePage();
+
+    if (this.isSignInUrl(page.url())) {
+      throw new Error(`Suno redirected Playwright to sign-in page: ${page.url()}. Refresh SUNO_COOKIE and verify the account can open https://suno.com/create in a normal browser.`);
+    }
   }
 
   /**
@@ -408,9 +469,10 @@ class SunoApi {
     }
 
     logger.info('CAPTCHA required. Launching browser...')
+    await this.keepAlive(false);
     const browser = await this.launchBrowser();
     const page = await browser.newPage();
-    await page.goto('https://suno.com/create', { referer: 'https://www.google.com/', waitUntil: 'domcontentloaded', timeout: 0 });
+    await this.openAuthenticatedCreatePage(page);
 
     await this.waitForStudioReady(page);
 
