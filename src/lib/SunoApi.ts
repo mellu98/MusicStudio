@@ -195,16 +195,14 @@ class SunoApi {
       page.locator('input[type="text"]').first()
     ];
 
-    for (const candidate of candidates) {
-      try {
-        await candidate.waitFor({ state: 'visible', timeout: 8000 });
+    try {
+      return await Promise.any(candidates.map(async candidate => {
+        await candidate.waitFor({ state: 'visible', timeout: 1500 });
         return candidate;
-      } catch {
-        // Try next selector.
-      }
+      }));
+    } catch {
+      throw new Error(`Could not find the Suno prompt input in the page. Current URL: ${page.url()}`);
     }
-
-    throw new Error(`Could not find the Suno prompt input in the page. Current URL: ${page.url()}`);
   }
 
   private async resolveCreateButton(page: Page): Promise<Locator> {
@@ -214,16 +212,14 @@ class SunoApi {
       page.locator('button').filter({ hasText: /^Create$/i }).first()
     ];
 
-    for (const candidate of candidates) {
-      try {
-        await candidate.waitFor({ state: 'visible', timeout: 8000 });
+    try {
+      return await Promise.any(candidates.map(async candidate => {
+        await candidate.waitFor({ state: 'visible', timeout: 3000 });
         return candidate;
-      } catch {
-        // Try next selector.
-      }
+      }));
+    } catch {
+      throw new Error(`Could not find the Suno create button in the page. Current URL: ${page.url()}`);
     }
-
-    throw new Error(`Could not find the Suno create button in the page. Current URL: ${page.url()}`);
   }
 
   private async collectCreatePageDiagnostics(page: Page): Promise<string> {
@@ -396,6 +392,12 @@ class SunoApi {
       '--disable-web-security',
       '--no-sandbox',
       '--disable-dev-shm-usage',
+      '--disable-background-networking',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--mute-audio',
+      '--window-size=1280,720',
       '--disable-features=site-per-process',
       '--disable-features=IsolateOrigins',
       '--disable-extensions',
@@ -410,7 +412,22 @@ class SunoApi {
       args,
       headless: yn(process.env.BROWSER_HEADLESS, { default: true })
     });
-    const context = await browser.newContext({ userAgent: this.userAgent, locale: process.env.BROWSER_LOCALE, viewport: null });
+    const context = await browser.newContext({
+      userAgent: this.userAgent,
+      locale: process.env.BROWSER_LOCALE,
+      viewport: { width: 1280, height: 720 },
+      serviceWorkers: 'block'
+    });
+    await context.route('**/*', async route => {
+      const request = route.request();
+      const url = request.url();
+      if (request.resourceType() === 'media' || (request.resourceType() === 'font' && !url.includes('hcaptcha.com'))) {
+        await route.abort().catch(() => undefined);
+        return;
+      }
+
+      await route.continue().catch(() => undefined);
+    });
     await this.seedBrowserCookies(context);
     return context;
   }
@@ -658,6 +675,12 @@ class SunoApi {
     await this.keepAlive(false);
     const browser = await this.launchBrowser();
     const page = await browser.newPage();
+    browser.browser()?.on('disconnected', () => {
+      logger.error('Playwright browser disconnected during CAPTCHA flow.');
+    });
+    page.on('crash', () => {
+      logger.error('Playwright page crashed during CAPTCHA flow.');
+    });
     const controller = new AbortController();
     const generateRoute = '**/api/generate/v2/**';
     let timeoutHandle: NodeJS.Timeout | undefined;
@@ -674,7 +697,9 @@ class SunoApi {
     };
 
     try {
+      logger.info('Opening authenticated Suno create page');
       await this.openAuthenticatedCreatePage(page);
+      logger.info(`Suno create page opened at ${page.url()}`);
       await this.waitForStudioReady(page);
 
       if (this.ghostCursorEnabled)
@@ -685,11 +710,15 @@ class SunoApi {
         await page.getByLabel('Close').click({ timeout: 2000 });
       } catch (e) {}
 
+      logger.info('Resolving Suno create button');
       const button = await this.resolveCreateButton(page);
+      logger.info('Suno create button ready');
       try {
+        logger.info('Trying to resolve Suno prompt input');
         const textarea = await this.resolvePromptField(page);
         await this.click(textarea);
         await textarea.pressSequentially('Lorem ipsum', { delay: 80 });
+        logger.info('Suno prompt primed before CAPTCHA trigger');
       } catch (error: any) {
         logger.warn(error.message);
         const debugInfo = await this.collectCreatePageDiagnostics(page);
@@ -739,6 +768,7 @@ class SunoApi {
         throw new Error('Failed to register Suno generate request interceptor.');
       }
 
+      logger.info('Registering Suno generate request interceptor');
       await page.route(generateRoute, routeHandler);
 
       const captchaWorker = (async () => {
@@ -748,9 +778,11 @@ class SunoApi {
 
         while (true) {
           if (wait) {
+            logger.info('Waiting for hCaptcha network requests');
             await waitForRequests(page, controller.signal);
           }
 
+          logger.info('Waiting for hCaptcha challenge container');
           await challenge.waitFor({ state: 'visible', timeout: 20000 });
           const drag = (await challenge.locator('.prompt-text').first().innerText()).toLowerCase().includes('drag');
           let captcha: any;
@@ -821,6 +853,7 @@ class SunoApi {
         throw error;
       });
 
+      logger.info('Clicking Suno create button to trigger generate request');
       await this.click(button);
 
       return await Promise.race([
