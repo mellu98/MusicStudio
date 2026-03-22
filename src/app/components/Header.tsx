@@ -18,7 +18,7 @@ export default function Header() {
             <Link href="/docs">Docs</Link>
           </p>
           <p className="rounded-full bg-[var(--primary)] px-4 py-2 text-[#fcf7ef] shadow-lg shadow-[rgba(18,49,42,0.18)] transition hover:bg-[#1c473d]">
-            <a href="https://github.com/gcui-art/suno-api/" target="_blank" rel="noreferrer">
+            <a href="https://github.com/mellu98/MusicStudio" target="_blank" rel="noreferrer">
               GitHub
             </a>
           </p>

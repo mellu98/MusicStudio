@@ -9,15 +9,5 @@ services:
     autoDeployTrigger: commit
     healthCheckPath: /
     envVars:
-      - key: SUNO_COOKIE
+      - key: SUNOAPI_KEY
         sync: false
-      - key: TWOCAPTCHA_KEY
-        sync: false
-      - key: BROWSER
-        value: firefox
-      - key: BROWSER_GHOST_CURSOR
-        value: "false"
-      - key: BROWSER_LOCALE
-        value: en
-      - key: BROWSER_HEADLESS
-        value: "true"

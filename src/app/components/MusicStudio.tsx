@@ -7,6 +7,7 @@ import Section from "./Section";
 
 type Track = {
   id: string;
+  task_id?: string;
   title?: string;
   image_url?: string;
   lyric?: string;
@@ -26,6 +27,28 @@ type Quota = {
   period: string;
   monthly_limit: number;
   monthly_usage: number;
+};
+
+type QuotaPayload = {
+  credits_left?: number;
+  credits?: number;
+  credit?: number;
+  remaining_credits?: number;
+  period?: string;
+  monthly_limit?: number;
+  monthly_usage?: number;
+  usage?: number;
+  limit?: number;
+};
+
+type TaskResponse = {
+  taskId?: string;
+  task_id?: string;
+  id?: string;
+  data?: Track[] | { sunoData?: Track[] } | Track;
+  error?: string;
+  message?: string;
+  detail?: string;
 };
 
 type FormState = {
@@ -77,6 +100,120 @@ function readStoredValue<T>(key: string): T | null {
   } catch {
     return null;
   }
+}
+
+function pickErrorMessage(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== "object") {
+    return fallback;
+  }
+
+  const candidate = payload as Record<string, unknown>;
+  return (
+    (typeof candidate.error === "string" && candidate.error) ||
+    (typeof candidate.message === "string" && candidate.message) ||
+    (typeof candidate.detail === "string" && candidate.detail) ||
+    fallback
+  );
+}
+
+function getTrackKey(track: Track) {
+  return track.task_id || track.id;
+}
+
+function getTaskIds(tracks: Track[]) {
+  return Array.from(
+    new Set(
+      tracks
+        .map(track => getTrackKey(track))
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+}
+
+function normalizeTracks(payload: unknown): Track[] {
+  if (Array.isArray(payload)) {
+    return payload.filter(Boolean) as Track[];
+  }
+
+  if (payload && typeof payload === "object") {
+    const candidate = payload as TaskResponse;
+    const nested = candidate.data;
+
+    if (Array.isArray(nested)) {
+      return nested.filter(Boolean) as Track[];
+    }
+
+    if (nested && typeof nested === "object" && "sunoData" in nested) {
+      const sunoData = (nested as { sunoData?: Track[] }).sunoData;
+      return Array.isArray(sunoData) ? sunoData.filter(Boolean) : [];
+    }
+
+    if (nested && typeof nested === "object") {
+      return [nested as Track];
+    }
+  }
+
+  return [];
+}
+
+function extractTaskId(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const candidate = payload as TaskResponse;
+  const values = [candidate.task_id, candidate.taskId, candidate.id];
+  const taskId = values.find((value): value is string => typeof value === "string" && value.length > 0);
+  return taskId || null;
+}
+
+function toPlaceholderTrack(payload: unknown, fallbackTitle: string): (Track & { task_id: string }) | null {
+  const taskId = extractTaskId(payload);
+  if (!taskId) {
+    return null;
+  }
+
+  const currentPayload = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  return {
+    id: taskId,
+    task_id: taskId,
+    title: typeof currentPayload.title === "string" && currentPayload.title.length > 0 ? currentPayload.title : fallbackTitle,
+    prompt: typeof currentPayload.prompt === "string" ? currentPayload.prompt : undefined,
+    status: typeof currentPayload.status === "string" ? currentPayload.status : "submitted",
+    error_message: typeof currentPayload.error_message === "string" ? currentPayload.error_message : undefined
+  };
+}
+
+function normalizeQuota(payload: unknown): Quota | null {
+  if (!payload || typeof payload !== "object") {
+    if (typeof payload === "number" && Number.isFinite(payload)) {
+      return {
+        credits_left: payload,
+        period: "month",
+        monthly_limit: payload,
+        monthly_usage: 0
+      };
+    }
+    return null;
+  }
+
+  const candidate = payload as QuotaPayload & { data?: QuotaPayload };
+  const source = candidate.data && typeof candidate.data === "object" ? candidate.data : candidate;
+  const creditsLeft = source.credits_left ?? source.credits ?? source.credit ?? source.remaining_credits;
+  const monthlyLimit = source.monthly_limit ?? source.limit ?? creditsLeft ?? 0;
+  const monthlyUsage = source.monthly_usage ?? source.usage ?? 0;
+  const period = source.period ?? "month";
+
+  if (typeof creditsLeft !== "number" && typeof monthlyLimit !== "number") {
+    return null;
+  }
+
+  return {
+    credits_left: typeof creditsLeft === "number" ? creditsLeft : Math.max(0, monthlyLimit - monthlyUsage),
+    period,
+    monthly_limit: typeof monthlyLimit === "number" ? monthlyLimit : 0,
+    monthly_usage: typeof monthlyUsage === "number" ? monthlyUsage : 0
+  };
 }
 
 function getTrackStatusLabel(status?: string) {
@@ -177,11 +314,18 @@ export default function MusicStudio() {
 
       if (!response.ok) {
         setQuota(null);
-        setQuotaError(payload?.error || "Server non ancora configurato.");
+        setQuotaError(pickErrorMessage(payload, "Server non ancora configurato."));
         return;
       }
 
-      setQuota(payload as Quota);
+      const normalizedQuota = normalizeQuota(payload);
+      if (!normalizedQuota) {
+        setQuota(null);
+        setQuotaError("La quota non ha ancora una forma supportata dalla UI.");
+        return;
+      }
+
+      setQuota(normalizedQuota);
     } catch {
       setQuota(null);
       setQuotaError("Impossibile leggere la quota in questo momento.");
@@ -195,8 +339,9 @@ export default function MusicStudio() {
     }));
   }
 
-  async function pollTracks(ids: string[], jobId: number) {
-    const query = encodeURIComponent(ids.join(","));
+  async function pollTracks(taskIds: string[], jobId: number) {
+    const uniqueTaskIds = Array.from(new Set(taskIds.filter(Boolean)));
+    const query = encodeURIComponent(uniqueTaskIds.join(","));
 
     for (let attempt = 0; attempt < 80; attempt += 1) {
       if (activeJobRef.current !== jobId) {
@@ -223,13 +368,16 @@ export default function MusicStudio() {
 
         if (!response.ok) {
           if (attempt > 2) {
-            setError(payload?.error || "Errore nel recupero dello stato della generazione.");
+            setError(pickErrorMessage(payload, "Errore nel recupero dello stato della generazione."));
             setPhase("done");
           }
           continue;
         }
 
-        const nextResults = Array.isArray(payload) ? (payload as Track[]) : [];
+        const nextResults = normalizeTracks(payload).map(track => ({
+          ...track,
+          task_id: track.task_id || track.id
+        }));
         if (nextResults.length === 0) {
           continue;
         }
@@ -320,26 +468,36 @@ export default function MusicStudio() {
 
       if (!response.ok) {
         setPhase("idle");
-        setError(body?.error || "La generazione non è partita.");
+        setError(pickErrorMessage(body, "La generazione non è partita."));
         setStatusMessage("Qualcosa ha fermato la richiesta prima dell'avvio.");
         return;
       }
 
-      const freshResults = Array.isArray(body) ? (body as Track[]) : [];
+      const freshResults = normalizeTracks(body).map(track => ({
+        ...track,
+        task_id: track.task_id || extractTaskId(body) || track.id
+      }));
+
+      if (freshResults.length === 0) {
+        const placeholderTrack = toPlaceholderTrack(body, usesCustomMode ? "Clip custom" : "Nuovo job");
+        if (placeholderTrack) {
+          freshResults.push(placeholderTrack);
+        }
+      }
 
       if (freshResults.length === 0) {
         setPhase("idle");
-        setError("Suno non ha restituito clip da monitorare.");
+        setError(pickErrorMessage(body, "Suno non ha restituito clip da monitorare."));
         return;
       }
 
       setResults(freshResults);
       setPhase("polling");
-      setStatusMessage("Clip creati. Adesso seguo lo stato finché l'audio è pronto.");
+      setStatusMessage("Job avviato. Adesso seguo lo stato finché l'audio è pronto.");
 
-      const ids = freshResults.map(track => track.id).filter(Boolean);
-      if (ids.length > 0) {
-        await pollTracks(ids, jobId);
+      const taskIds = getTaskIds(freshResults);
+      if (taskIds.length > 0) {
+        await pollTracks(taskIds, jobId);
       }
     } catch {
       setPhase("idle");
@@ -426,7 +584,7 @@ export default function MusicStudio() {
                 </div>
               ) : (
                 <div className="rounded-[1.25rem] bg-[var(--accent-soft)] p-4 text-sm leading-6 text-[var(--foreground)]">
-                  {quotaError || "Se qui non vedi la quota, configura prima SUNO_COOKIE e TWOCAPTCHA_KEY."}
+                  {quotaError || "Se qui non vedi la quota, configura prima SUNOAPI_KEY su Render."}
                 </div>
               )}
             </section>
@@ -606,7 +764,7 @@ export default function MusicStudio() {
 
                 {results.map(track => (
                   <article
-                    key={track.id}
+                    key={getTrackKey(track)}
                     className="overflow-hidden rounded-[1.75rem] border border-[rgba(18,49,42,0.1)] bg-[var(--surface-strong)]"
                   >
                     <div className="grid gap-0 md:grid-cols-[220px_1fr]">
@@ -632,9 +790,9 @@ export default function MusicStudio() {
                             <h3 className="text-2xl font-semibold tracking-tight text-[var(--primary)]">
                               {track.title || "Nuovo clip"}
                             </h3>
-                            <p className="mt-1 text-sm text-[var(--muted)]">
-                              {formatTrackDate(track.created_at)} · ID {track.id}
-                            </p>
+                              <p className="mt-1 text-sm text-[var(--muted)]">
+                                {formatTrackDate(track.created_at)} · ID {getTrackKey(track)}
+                              </p>
                           </div>
                           <span className="rounded-full bg-[var(--accent-soft)] px-3 py-2 text-sm font-medium text-[var(--primary)]">
                             {getTrackStatusLabel(track.status)}

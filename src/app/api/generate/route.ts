@@ -1,86 +1,83 @@
-import { NextResponse, NextRequest } from "next/server";
-import { cookies } from 'next/headers'
-import { DEFAULT_MODEL, sunoApi } from "@/lib/SunoApi";
-import { corsHeaders } from "@/lib/utils";
+import { NextRequest, NextResponse } from 'next/server';
+import { corsHeaders } from '@/lib/utils';
+import {
+  buildQueuedTrack,
+  SunoApiOrgClient,
+  SunoApiOrgError
+} from '@/lib/SunoApiOrgClient';
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
+
+function getClient() {
+  return new SunoApiOrgClient(process.env.SUNOAPI_KEY);
+}
+
+function normalizeModel(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function buildGenerationInput(body: Record<string, unknown>, customMode: boolean) {
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+  const title = typeof body.title === 'string' ? body.title.trim() : undefined;
+  const tags = typeof body.tags === 'string' ? body.tags.trim() : undefined;
+  const model = normalizeModel(body.model);
+  const instrumental = Boolean(body.make_instrumental);
+
+  return {
+    prompt,
+    customMode,
+    instrumental,
+    model,
+    style: customMode ? tags : undefined,
+    title: customMode ? title : undefined
+  };
+}
+
+function buildQueuedResponse(taskId: string, body: Record<string, unknown>, customMode: boolean) {
+  const input = buildGenerationInput(body, customMode);
+  return [
+    buildQueuedTrack(taskId, {
+      prompt: input.prompt,
+      style: input.style,
+      title: input.title,
+      instrumental: input.instrumental,
+      model: input.model,
+      negative_tags: typeof body.negative_tags === 'string' ? body.negative_tags.trim() : undefined
+    })
+  ];
+}
+
+function toErrorResponse(error: unknown) {
+  if (error instanceof SunoApiOrgError) {
+    return NextResponse.json(
+      {
+        code: error.status,
+        msg: error.message,
+        error: error.message
+      },
+      {
+        status: error.status,
+        headers: corsHeaders
+      }
+    );
+  }
+
+  const message = error instanceof Error ? error.message : 'Unexpected error while generating music.';
+  return NextResponse.json(
+    {
+      code: 500,
+      msg: message,
+      error: message
+    },
+    {
+      status: 500,
+      headers: corsHeaders
+    }
+  );
+}
 
 export async function POST(req: NextRequest) {
-  if (req.method === 'POST') {
-    try {
-      const body = await req.json();
-      const { prompt, make_instrumental, model, wait_audio } = body;
-
-      const audioInfo = await (await sunoApi((await cookies()).toString())).generate(
-        prompt,
-        Boolean(make_instrumental),
-        model || DEFAULT_MODEL,
-        Boolean(wait_audio)
-      );
-
-      return new NextResponse(JSON.stringify(audioInfo), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders
-        }
-      });
-    } catch (error: any) {
-      console.error('Error generating audio:', error);
-      
-      // Handle different types of errors
-      if (error.response) {
-        // Axios error with response
-        console.error('Response error:', JSON.stringify(error.response.data));
-        
-        if (error.response.status === 402) {
-          return new NextResponse(JSON.stringify({ 
-            error: error.response.data?.detail || 'Payment required' 
-          }), {
-            status: 402,
-            headers: {
-              'Content-Type': 'application/json',
-              ...corsHeaders
-            }
-          });
-        }
-        
-        return new NextResponse(JSON.stringify({ 
-          error: 'API Error: ' + (error.response.data?.detail || error.response.statusText || 'Unknown error')
-        }), {
-          status: error.response.status || 500,
-          headers: {
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        });
-      } else if (error.request) {
-        // Axios error without response (network error, timeout, etc.)
-        console.error('Network error:', error.message);
-        return new NextResponse(JSON.stringify({ 
-          error: 'Network error: Unable to connect to Suno API. Please check your internet connection and try again.' 
-        }), {
-          status: 503,
-          headers: {
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        });
-      } else {
-        // Other types of errors (timeout, etc.)
-        console.error('Other error:', error.message);
-        return new NextResponse(JSON.stringify({ 
-          error: 'Internal error: ' + (error.message || 'Unknown error occurred') 
-        }), {
-          status: 500,
-          headers: {
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        });
-      }
-    }
-  } else {
+  if (req.method !== 'POST') {
     return new NextResponse('Method Not Allowed', {
       headers: {
         Allow: 'POST',
@@ -89,10 +86,27 @@ export async function POST(req: NextRequest) {
       status: 405
     });
   }
+
+  try {
+    const body = (await req.json()) as Record<string, unknown>;
+    const client = getClient();
+    const input = buildGenerationInput(body, false);
+    const taskId = await client.createTask({
+      ...input,
+      callBackUrl: typeof body.callBackUrl === 'string' ? body.callBackUrl : undefined
+    });
+
+    return NextResponse.json(buildQueuedResponse(taskId, body, false), {
+      status: 200,
+      headers: corsHeaders
+    });
+  } catch (error) {
+    console.error('Error generating audio:', error);
+    return toErrorResponse(error);
+  }
 }
 
-
-export async function OPTIONS(request: Request) {
+export async function OPTIONS() {
   return new Response(null, {
     status: 200,
     headers: corsHeaders

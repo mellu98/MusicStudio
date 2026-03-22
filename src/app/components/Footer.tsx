@@ -6,8 +6,8 @@ export default function Footer() {
       <p className="flex w-full max-w-6xl items-center justify-between gap-4">
         <span>Genera, ascolta e porta la tua mini app in tasca.</span>
         <span className="flex items-center gap-2">
-          <span>© 2026</span>
-          <Link href="https://github.com/gcui-art/suno-api/">gcui-art/suno-api</Link>
+          <span>&copy; 2026</span>
+          <Link href="https://github.com/mellu98/MusicStudio">mellu98/MusicStudio</Link>
         </span>
       </p>
     </footer>

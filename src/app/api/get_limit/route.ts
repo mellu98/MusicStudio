@@ -1,36 +1,47 @@
-import { NextResponse, NextRequest } from "next/server";
-import { cookies } from 'next/headers'
-import { sunoApi } from "@/lib/SunoApi";
-import { corsHeaders } from "@/lib/utils";
+import { NextRequest, NextResponse } from 'next/server';
+import { corsHeaders } from '@/lib/utils';
+import {
+  SunoApiOrgClient,
+  SunoApiOrgError
+} from '@/lib/SunoApiOrgClient';
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
+
+function getClient() {
+  return new SunoApiOrgClient(process.env.SUNOAPI_KEY);
+}
+
+function toErrorResponse(error: unknown) {
+  if (error instanceof SunoApiOrgError) {
+    return NextResponse.json(
+      {
+        code: error.status,
+        msg: error.message,
+        error: error.message
+      },
+      {
+        status: error.status,
+        headers: corsHeaders
+      }
+    );
+  }
+
+  const message = error instanceof Error ? error.message : 'Unexpected error while fetching credits.';
+  return NextResponse.json(
+    {
+      code: 500,
+      msg: message,
+      error: message
+    },
+    {
+      status: 500,
+      headers: corsHeaders
+    }
+  );
+}
 
 export async function GET(req: NextRequest) {
-  if (req.method === 'GET') {
-    try {
-
-      const limit = await (await sunoApi((await cookies()).toString())).get_credits();
-
-
-      return new NextResponse(JSON.stringify(limit), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders
-        }
-      });
-    } catch (error) {
-      console.error('Error fetching limit:', error);
-
-      return new NextResponse(JSON.stringify({ error: 'Internal server error. ' + error }), {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders
-        }
-      });
-    }
-  } else {
+  if (req.method !== 'GET') {
     return new NextResponse('Method Not Allowed', {
       headers: {
         Allow: 'GET',
@@ -39,9 +50,34 @@ export async function GET(req: NextRequest) {
       status: 405
     });
   }
+
+  try {
+    const client = getClient();
+    const creditsLeft = await client.getCredits();
+
+    return NextResponse.json(
+      {
+        code: 200,
+        msg: 'success',
+        data: {
+          credits_left: creditsLeft,
+          period: 'month',
+          monthly_limit: creditsLeft,
+          monthly_usage: 0
+        }
+      },
+      {
+        status: 200,
+        headers: corsHeaders
+      }
+    );
+  } catch (error) {
+    console.error('Error fetching limit:', error);
+    return toErrorResponse(error);
+  }
 }
 
-export async function OPTIONS(request: Request) {
+export async function OPTIONS() {
   return new Response(null, {
     status: 200,
     headers: corsHeaders

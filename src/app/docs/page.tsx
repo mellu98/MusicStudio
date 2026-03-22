@@ -1,62 +1,64 @@
-import React from 'react';
-import Swagger from '../components/Swagger';
-import spec from './swagger-suno-api.json'; // 直接导入JSON文件
-import Section from '../components/Section';
-import Markdown from 'react-markdown';
+import Section from "../components/Section";
 
+const supportedRoutes = [
+  {
+    method: "POST",
+    path: "/api/generate",
+    description: "Avvia un job semplice da prompt e restituisce subito un task id da monitorare."
+  },
+  {
+    method: "POST",
+    path: "/api/custom_generate",
+    description: "Avvia un job custom con titolo, stile e lyrics."
+  },
+  {
+    method: "GET",
+    path: "/api/get?ids=taskId1,taskId2",
+    description: "Recupera lo stato dei task e, quando pronti, audio, cover e lyrics."
+  },
+  {
+    method: "GET",
+    path: "/api/get_limit",
+    description: "Legge il saldo crediti configurato tramite `SUNOAPI_KEY`."
+  }
+];
 
 export default function Docs() {
-    return (
-        <>
-            <Section className="my-10">
-                <article className="prose lg:prose-lg max-w-3xl pt-10">
-                    <h1 className=' text-center text-indigo-900'>
-                        API Docs
-                    </h1>
-                    <Markdown>
-                        {`                     
----
-\`gcui-art/suno-api\` currently mainly implements the following APIs:
+  return (
+    <Section className="py-10 lg:py-14" innerClassName="max-w-4xl">
+      <div className="glass-panel rounded-[2rem] p-6 lg:p-8">
+        <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Docs</p>
+        <h1 className="mt-3 text-4xl font-semibold tracking-tight text-[var(--primary)]">
+          API supportata in questa build
+        </h1>
+        <p className="mt-4 max-w-3xl text-sm leading-7 text-[var(--muted)]">
+          Questa versione di Suno Pocket Studio usa <code>sunoapi.org</code> come provider server-side.
+          La PWA e il deploy Render supportano in modo ufficiale le route qui sotto, senza cookie Suno,
+          Playwright o servizi CAPTCHA.
+        </p>
 
-\`\`\`bash
-- \`/api/generate\`: Generate music
-- \`/v1/chat/completions\`: Generate music - Call the generate API in a format 
-  that works with OpenAI’s API.
-- \`/api/custom_generate\`: Generate music (Custom Mode, support setting lyrics, 
-  music style, title, etc.)
-- \`/api/generate_lyrics\`: Generate lyrics based on prompt
-- \`/api/get\`: Get music information based on the id. Use “,” to separate multiple 
-    ids.  If no IDs are provided, all music will be returned.
-- \`/api/get_limit\`: Get quota Info
-- \`/api/extend_audio\`: Extend audio length
-- \`/api/generate_stems\`: Make stem tracks (separate audio and music track)
-- \`/api/get_aligned_lyrics\`: Get list of timestamps for each word in the lyrics
-- \`/api/clip\`:  Get clip information based on ID passed as query parameter \`id\`
-- \`/api/concat\`: Generate the whole song from extensions
-- \`/api/persona\`: Get persona information and clips based on ID and page number
-\`\`\`
+        <div className="mt-8 grid gap-4">
+          {supportedRoutes.map(route => (
+            <article
+              key={`${route.method}-${route.path}`}
+              className="rounded-[1.4rem] border border-[rgba(18,49,42,0.1)] bg-[var(--surface-strong)] p-5"
+            >
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-semibold tracking-[0.18em] text-[var(--primary)]">
+                  {route.method}
+                </span>
+                <code className="text-sm text-[var(--primary)]">{route.path}</code>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{route.description}</p>
+            </article>
+          ))}
+        </div>
 
-Feel free to explore the detailed API parameters and conduct tests on this page.
-                        `}
-                    </Markdown>
-                </article>
-            </Section>
-            <Section className="my-10">
-                <article className='prose lg:prose-lg max-w-3xl py-10'>
-                    <h2 className='text-center'>
-                        Details of the API and testing it online
-                    </h2>
-                    <p className='text-red-800 italic'>
-                        This is just a demo, bound to a test account. Please do not use it frequently, so that more people can test online.
-                    </p>
-                </article>
-
-                <div className=' border p-4 rounded-2xl shadow-xl hover:shadow-none duration-200'>
-                    <Swagger spec={spec} />
-                </div>
-
-            </Section>
-        </>
-
-    );
+        <div className="mt-8 rounded-[1.4rem] border border-[rgba(230,135,77,0.24)] bg-[rgba(230,135,77,0.1)] p-5 text-sm leading-6 text-[var(--foreground)]">
+          Le altre route legacy presenti nel repository non fanno parte del flusso supportato su Render per questa
+          build. Per l&apos;uso quotidiano della PWA considera supportate solo le quattro route sopra.
+        </div>
+      </div>
+    </Section>
+  );
 }

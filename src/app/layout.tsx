@@ -17,10 +17,10 @@ export const metadata: Metadata = {
     default: "Suno Pocket Studio",
     template: "%s | Suno Pocket Studio"
   },
-  description: "PWA semplice per generare brani con Suno API, ascoltare i risultati e portarli sul telefono.",
-  keywords: ["suno", "music generator", "pwa", "next.js", "suno api", "ai music"],
+  description: "PWA semplice per generare brani, seguire i job e ascoltare i risultati dal telefono tramite SunoAPI.org.",
+  keywords: ["suno", "music generator", "pwa", "next.js", "sunoapi.org", "ai music"],
   applicationName: "Suno Pocket Studio",
-  creator: "@gcui.ai",
+  creator: "mellu98",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
