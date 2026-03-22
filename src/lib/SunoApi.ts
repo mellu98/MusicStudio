@@ -7,7 +7,7 @@ import * as cookie from 'cookie';
 import { randomUUID } from 'node:crypto';
 import { Solver } from '@2captcha/captcha-solver';
 import { paramsCoordinates } from '@2captcha/captcha-solver/dist/structs/2captcha';
-import { BrowserContext, Page, Locator, chromium, firefox } from 'rebrowser-playwright-core';
+import { BrowserContext, Page, Locator, chromium, firefox } from 'playwright-core';
 import { createCursor, Cursor } from 'ghost-cursor-playwright';
 import { promises as fs } from 'fs';
 import path from 'node:path';
@@ -208,8 +208,15 @@ class SunoApi {
   private async resolveCreateButton(page: Page): Promise<Locator> {
     const candidates = [
       page.locator('button[aria-label="Create"]').first(),
+      page.locator('button[aria-label*="create" i]').first(),
+      page.locator('[role="button"][aria-label*="create" i]').first(),
       page.getByRole('button', { name: /create/i }).first(),
-      page.locator('button').filter({ hasText: /^Create$/i }).first()
+      page.getByRole('button', { name: /generate/i }).first(),
+      page.getByRole('button', { name: /continue/i }).first(),
+      page.locator('button').filter({ hasText: /create|generate/i }).first(),
+      page.locator('button[type="submit"]').first(),
+      page.locator('[data-testid*="create" i]').first(),
+      page.locator('[class*="create" i]').first()
     ];
 
     try {
@@ -231,6 +238,11 @@ class SunoApi {
         .filter(Boolean)
         .slice(0, 8);
 
+      const roleButtons = Array.from(document.querySelectorAll('[role="button"]'))
+        .map(element => normalize(element.textContent) || normalize(element.getAttribute('aria-label')) || normalize(element.getAttribute('data-testid')))
+        .filter(Boolean)
+        .slice(0, 8);
+
       const placeholders = Array.from(document.querySelectorAll('[placeholder]'))
         .map(element => normalize(element.getAttribute('placeholder')))
         .filter(Boolean)
@@ -246,6 +258,7 @@ class SunoApi {
       return {
         title: document.title,
         buttons,
+        roleButtons,
         placeholders,
         contentEditableCount,
         textboxLikeCount,
