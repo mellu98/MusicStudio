@@ -609,13 +609,21 @@ class SunoApi {
           reject(e);
       }
     }).catch(e => {
-      browser.browser()?.close();
-      throw e;
+      logger.error(`Captcha worker failed: ${e?.message || e}`);
+      controller.abort();
+      browser.browser()?.close().catch(() => undefined);
     });
     return (new Promise((resolve, reject) => {
+      const timeoutHandle = setTimeout(() => {
+        controller.abort();
+        browser.browser()?.close().catch(() => undefined);
+        reject(new Error('Timed out waiting for Suno generate request after triggering hCaptcha.'));
+      }, 90000);
+
       page.route('**/api/generate/v2/**', async (route: any) => {
         try {
           logger.info('hCaptcha token received. Closing browser');
+          clearTimeout(timeoutHandle);
           route.abort();
           browser.browser()?.close();
           controller.abort();
@@ -623,6 +631,7 @@ class SunoApi {
           this.currentToken = request.headers().authorization.split('Bearer ').pop();
           resolve(request.postDataJSON().token);
         } catch(err) {
+          clearTimeout(timeoutHandle);
           reject(err);
         }
       });
