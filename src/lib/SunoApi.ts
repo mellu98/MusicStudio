@@ -269,6 +269,93 @@ class SunoApi {
     return JSON.stringify(diagnostics);
   }
 
+  private async primePromptFieldViaDom(page: Page, value: string): Promise<boolean> {
+    return page.evaluate((text: string) => {
+      const isVisible = (element: Element) => {
+        const htmlElement = element as HTMLElement;
+        const rect = htmlElement.getBoundingClientRect();
+        const style = window.getComputedStyle(htmlElement);
+        return rect.width > 0
+          && rect.height > 0
+          && style.visibility !== 'hidden'
+          && style.display !== 'none';
+      };
+
+      const elements = Array.from(document.querySelectorAll(
+        'textarea, input[type="text"], [contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"], [placeholder]'
+      ));
+
+      for (const element of elements) {
+        if (!isVisible(element)) {
+          continue;
+        }
+
+        const htmlElement = element as HTMLElement;
+        htmlElement.focus();
+
+        if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+          element.value = text;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }
+
+        if (htmlElement.isContentEditable) {
+          htmlElement.textContent = text;
+          htmlElement.dispatchEvent(new Event('input', { bubbles: true }));
+          htmlElement.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }
+      }
+
+      return false;
+    }, value);
+  }
+
+  private async clickCreateButtonViaDom(page: Page): Promise<string | null> {
+    return page.evaluate(() => {
+      const normalize = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim();
+      const isVisible = (element: Element) => {
+        const htmlElement = element as HTMLElement;
+        const rect = htmlElement.getBoundingClientRect();
+        const style = window.getComputedStyle(htmlElement);
+        return rect.width > 0
+          && rect.height > 0
+          && style.visibility !== 'hidden'
+          && style.display !== 'none';
+      };
+
+      const candidates = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], a[role="button"]'));
+      for (const candidate of candidates) {
+        if (!isVisible(candidate)) {
+          continue;
+        }
+
+        const htmlElement = candidate as HTMLElement;
+        if ((htmlElement as HTMLButtonElement).disabled) {
+          continue;
+        }
+
+        const descriptor = [
+          normalize(candidate.textContent),
+          normalize(candidate.getAttribute('aria-label')),
+          normalize(candidate.getAttribute('data-testid')),
+          normalize(candidate.getAttribute('title')),
+          normalize(candidate.getAttribute('class'))
+        ].filter(Boolean).join(' ').toLowerCase();
+
+        if (!/(create|generate|continue)/i.test(descriptor)) {
+          continue;
+        }
+
+        htmlElement.click();
+        return descriptor || candidate.tagName.toLowerCase();
+      }
+
+      return null;
+    });
+  }
+
   /**
    * Get the clerk package latest version id.
    * This method is commented because we are now using a hard-coded Clerk version, hence this method is not needed.
@@ -723,17 +810,12 @@ class SunoApi {
         await page.getByLabel('Close').click({ timeout: 2000 });
       } catch (e) {}
 
-      logger.info('Resolving Suno create button');
-      const button = await this.resolveCreateButton(page);
-      logger.info('Suno create button ready');
-      try {
-        logger.info('Trying to resolve Suno prompt input');
-        const textarea = await this.resolvePromptField(page);
-        await this.click(textarea);
-        await textarea.pressSequentially('Lorem ipsum', { delay: 80 });
+      logger.info('Trying to prime Suno prompt via DOM');
+      const promptPrimed = await this.primePromptFieldViaDom(page, 'Lorem ipsum');
+      if (promptPrimed) {
         logger.info('Suno prompt primed before CAPTCHA trigger');
-      } catch (error: any) {
-        logger.warn(error.message);
+      } else {
+        logger.warn('Could not prime the Suno prompt via DOM.');
         const debugInfo = await this.collectCreatePageDiagnostics(page);
         logger.warn(`Create page diagnostics: ${debugInfo}`);
       }
@@ -853,8 +935,12 @@ class SunoApi {
           try {
             await this.click(frame.locator('.button-submit'));
           } catch (error: any) {
-            if (error.message.includes('viewport'))
-              await this.click(button);
+            if (error.message.includes('viewport')) {
+              const retriggered = await this.clickCreateButtonViaDom(page);
+              if (!retriggered) {
+                throw new Error(`Could not retrigger the Suno create button after CAPTCHA viewport error. Current URL: ${page.url()}`);
+              }
+            }
             else
               throw error;
           }
@@ -866,8 +952,14 @@ class SunoApi {
         throw error;
       });
 
-      logger.info('Clicking Suno create button to trigger generate request');
-      await this.click(button);
+      logger.info('Clicking Suno create button via DOM');
+      const clickedButton = await this.clickCreateButtonViaDom(page);
+      if (!clickedButton) {
+        const debugInfo = await this.collectCreatePageDiagnostics(page);
+        logger.warn(`Create page diagnostics: ${debugInfo}`);
+        throw new Error(`Could not find the Suno create button in the page. Current URL: ${page.url()}`);
+      }
+      logger.info(`Suno create button clicked via DOM: ${clickedButton}`);
 
       return await Promise.race([
         tokenPromise,
