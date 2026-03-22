@@ -78,7 +78,7 @@ class SunoApi {
   private deviceId?: string;
   private userAgent?: string;
   private cookies: Record<string, string | undefined>;
-  private solver = new Solver(process.env.TWOCAPTCHA_KEY + '');
+  private solver?: Solver;
   private ghostCursorEnabled = yn(process.env.BROWSER_GHOST_CURSOR, { default: false });
   private cursor?: Cursor;
 
@@ -125,6 +125,101 @@ class SunoApi {
     await this.getAuthToken();
     await this.keepAlive();
     return this;
+  }
+
+  private getSolver(): Solver {
+    const apiKey = process.env.TWOCAPTCHA_KEY?.trim();
+    if (!apiKey) {
+      throw new Error('TWOCAPTCHA_KEY is required when Suno asks for hCaptcha.');
+    }
+
+    if (!this.solver) {
+      this.solver = new Solver(apiKey);
+    }
+
+    return this.solver;
+  }
+
+  private async waitForStudioReady(page: Page): Promise<void> {
+    logger.info('Waiting for Suno interface to load');
+
+    const waitForKnownResponse = page.waitForResponse((response: any) => {
+      const url = response.url();
+      return response.ok() && (
+        url.includes('/api/project/') ||
+        url.includes('/api/feed/v2') ||
+        url.includes('/api/billing/info/') ||
+        url.includes('/api/user/') ||
+        url.includes('/api/me')
+      );
+    }, { timeout: 20000 }).then(() => 'network response');
+
+    const waitForCreateButton = page.getByRole('button', { name: /create/i })
+      .first()
+      .waitFor({ state: 'visible', timeout: 30000 })
+      .then(() => 'create button');
+
+    const waitForCustomTextarea = page.locator('.custom-textarea')
+      .first()
+      .waitFor({ state: 'visible', timeout: 30000 })
+      .then(() => 'custom textarea');
+
+    const waitForTextarea = page.locator('textarea')
+      .first()
+      .waitFor({ state: 'visible', timeout: 30000 })
+      .then(() => 'textarea');
+
+    try {
+      const readySignal = await Promise.any([
+        waitForKnownResponse,
+        waitForCreateButton,
+        waitForCustomTextarea,
+        waitForTextarea
+      ]);
+      logger.info(`Suno interface ready via ${readySignal}`);
+    } catch {
+      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
+      logger.info('Suno interface fallback to networkidle');
+    }
+  }
+
+  private async resolvePromptField(page: Page): Promise<Locator> {
+    const candidates = [
+      page.locator('.custom-textarea').first(),
+      page.locator('textarea[placeholder]').first(),
+      page.locator('textarea').first(),
+      page.locator('[contenteditable="true"]').first()
+    ];
+
+    for (const candidate of candidates) {
+      try {
+        await candidate.waitFor({ state: 'visible', timeout: 2500 });
+        return candidate;
+      } catch {
+        // Try next selector.
+      }
+    }
+
+    throw new Error('Could not find the Suno prompt input in the page.');
+  }
+
+  private async resolveCreateButton(page: Page): Promise<Locator> {
+    const candidates = [
+      page.locator('button[aria-label="Create"]').first(),
+      page.getByRole('button', { name: /create/i }).first(),
+      page.locator('button').filter({ hasText: /^Create$/i }).first()
+    ];
+
+    for (const candidate of candidates) {
+      try {
+        await candidate.waitFor({ state: 'visible', timeout: 2500 });
+        return candidate;
+      } catch {
+        // Try next selector.
+      }
+    }
+
+    throw new Error('Could not find the Suno create button in the page.');
   }
 
   /**
@@ -308,14 +403,16 @@ class SunoApi {
     if (!await this.captchaRequired())
       return null;
 
+    if (!process.env.TWOCAPTCHA_KEY?.trim()) {
+      throw new Error('TWOCAPTCHA_KEY is required when Suno asks for hCaptcha.');
+    }
+
     logger.info('CAPTCHA required. Launching browser...')
     const browser = await this.launchBrowser();
     const page = await browser.newPage();
     await page.goto('https://suno.com/create', { referer: 'https://www.google.com/', waitUntil: 'domcontentloaded', timeout: 0 });
 
-    logger.info('Waiting for Suno interface to load');
-    // await page.locator('.react-aria-GridList').waitFor({ timeout: 60000 });
-    await page.waitForResponse('**/api/project/**\\?**', { timeout: 60000 }); // wait for song list API call
+    await this.waitForStudioReady(page);
 
     if (this.ghostCursorEnabled)
       this.cursor = await createCursor(page);
@@ -326,12 +423,12 @@ class SunoApi {
       // await this.click(page, { x: 318, y: 13 });
     } catch(e) {}
 
-    const textarea = page.locator('.custom-textarea');
+    const textarea = await this.resolvePromptField(page);
     await this.click(textarea);
     await textarea.pressSequentially('Lorem ipsum', { delay: 80 });
 
-    const button = page.locator('button[aria-label="Create"]').locator('div.flex');
-    this.click(button);
+    const button = await this.resolveCreateButton(page);
+    await this.click(button);
 
     const controller = new AbortController();
     new Promise<void>(async (resolve, reject) => {
@@ -356,7 +453,7 @@ class SunoApi {
                 payload.textinstructions = 'CLICK on the shapes at their edge or center as shown above—please be precise!';
                 payload.imginstructions = (await fs.readFile(path.join(process.cwd(), 'public', 'drag-instructions.jpg'))).toString('base64');
               }
-              captcha = await this.solver.coordinates(payload);
+              captcha = await this.getSolver().coordinates(payload);
               break;
             } catch(err: any) {
               logger.info(err.message);
@@ -372,7 +469,7 @@ class SunoApi {
               throw new Error('.challenge-container boundingBox is null!');
             if (captcha.data.length % 2) {
               logger.info('Solution does not have even amount of points required for dragging. Requesting new solution...');
-              this.solver.badReport(captcha.id);
+              this.getSolver().badReport(captcha.id);
               wait = false;
               continue;
             }
