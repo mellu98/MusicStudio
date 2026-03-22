@@ -190,12 +190,14 @@ class SunoApi {
       page.locator('textarea[placeholder]').first(),
       page.locator('textarea').first(),
       page.locator('[contenteditable="true"]').first(),
+      page.locator('[contenteditable="plaintext-only"]').first(),
+      page.locator('[placeholder]').first(),
       page.locator('input[type="text"]').first()
     ];
 
     for (const candidate of candidates) {
       try {
-        await candidate.waitFor({ state: 'visible', timeout: 2500 });
+        await candidate.waitFor({ state: 'visible', timeout: 8000 });
         return candidate;
       } catch {
         // Try next selector.
@@ -214,7 +216,7 @@ class SunoApi {
 
     for (const candidate of candidates) {
       try {
-        await candidate.waitFor({ state: 'visible', timeout: 2500 });
+        await candidate.waitFor({ state: 'visible', timeout: 8000 });
         return candidate;
       } catch {
         // Try next selector.
@@ -222,6 +224,40 @@ class SunoApi {
     }
 
     throw new Error(`Could not find the Suno create button in the page. Current URL: ${page.url()}`);
+  }
+
+  private async collectCreatePageDiagnostics(page: Page): Promise<string> {
+    const diagnostics = await page.evaluate(() => {
+      const normalize = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim();
+
+      const buttons = Array.from(document.querySelectorAll('button'))
+        .map(button => normalize(button.textContent) || normalize(button.getAttribute('aria-label')))
+        .filter(Boolean)
+        .slice(0, 8);
+
+      const placeholders = Array.from(document.querySelectorAll('[placeholder]'))
+        .map(element => normalize(element.getAttribute('placeholder')))
+        .filter(Boolean)
+        .slice(0, 8);
+
+      const contentEditableCount = document.querySelectorAll('[contenteditable="true"], [contenteditable="plaintext-only"]').length;
+      const textboxLikeCount = document.querySelectorAll('textarea, input[type="text"], [role="textbox"]').length;
+      const iframeSources = Array.from(document.querySelectorAll('iframe'))
+        .map(frame => normalize(frame.getAttribute('src')) || normalize(frame.getAttribute('title')))
+        .filter(Boolean)
+        .slice(0, 8);
+
+      return {
+        title: document.title,
+        buttons,
+        placeholders,
+        contentEditableCount,
+        textboxLikeCount,
+        iframeSources
+      };
+    });
+
+    return JSON.stringify(diagnostics);
   }
 
   /**
@@ -485,11 +521,17 @@ class SunoApi {
       // await this.click(page, { x: 318, y: 13 });
     } catch(e) {}
 
-    const textarea = await this.resolvePromptField(page);
-    await this.click(textarea);
-    await textarea.pressSequentially('Lorem ipsum', { delay: 80 });
-
     const button = await this.resolveCreateButton(page);
+    try {
+      const textarea = await this.resolvePromptField(page);
+      await this.click(textarea);
+      await textarea.pressSequentially('Lorem ipsum', { delay: 80 });
+    } catch (error: any) {
+      logger.warn(error.message);
+      const debugInfo = await this.collectCreatePageDiagnostics(page);
+      logger.warn(`Create page diagnostics: ${debugInfo}`);
+    }
+
     await this.click(button);
 
     const controller = new AbortController();
