@@ -487,28 +487,36 @@ class SunoApi {
    * @returns {BrowserContext}
    */
   private async launchBrowser(): Promise<BrowserContext> {
-    const args = [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-web-security',
-      '--no-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-background-networking',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--mute-audio',
-      '--window-size=1280,720',
-      '--disable-features=site-per-process',
-      '--disable-features=IsolateOrigins',
-      '--disable-extensions',
-      '--disable-infobars'
-    ];
-    // Check for GPU acceleration, as it is recommended to turn it off for Docker
-    if (yn(process.env.BROWSER_DISABLE_GPU, { default: false }))
-      args.push('--enable-unsafe-swiftshader',
-        '--disable-gpu',
-        '--disable-setuid-sandbox');
-    const browser = await this.getBrowserType().launch({
+    const browserType = this.getBrowserType();
+    const browserName = process.env.BROWSER?.toLowerCase() || 'chromium';
+    let args: string[] = [];
+
+    if (browserName === 'firefox') {
+      args = ['--width=1280', '--height=720'];
+    } else {
+      args = [
+        '--disable-blink-features=AutomationControlled',
+        '--disable-web-security',
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-background-networking',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--mute-audio',
+        '--window-size=1280,720',
+        '--disable-features=site-per-process',
+        '--disable-features=IsolateOrigins',
+        '--disable-extensions',
+        '--disable-infobars'
+      ];
+      if (yn(process.env.BROWSER_DISABLE_GPU, { default: false }))
+        args.push('--enable-unsafe-swiftshader',
+          '--disable-gpu',
+          '--disable-setuid-sandbox');
+    }
+
+    const browser = await browserType.launch({
       args,
       headless: yn(process.env.BROWSER_HEADLESS, { default: true })
     });

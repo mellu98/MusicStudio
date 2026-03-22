@@ -23,9 +23,8 @@ ENV BROWSER_DISABLE_GPU=true
 
 RUN npm install --only=production                                                                                       
                                                                                                                     
-# Install all supported browsers, else switching browsers requires an image rebuild                                     
-RUN npx playwright install chromium                                                                                     
-# RUN npx playwright install firefox                                                                                     
+# Install supported browsers used by the service.
+RUN npx playwright install chromium firefox
                                                                                                                     
 COPY --from=builder /src/.next ./.next                                                                                  
 EXPOSE 3000                                                                                                             
